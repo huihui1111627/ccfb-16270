@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tempora — 时区与夏令时可视化</title>
+<style>
+  :root {
+    --bg: #0f141b; --panel: #171e28; --line: #26303d; --text: #dce4ee;
+    --muted: #8495a8; --accent: #5db1ff; --gap: #ff6b6b; --overlap: #ffd166;
+    --normal: #2ea87b;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
+  header { padding:20px 28px; border-bottom:1px solid var(--line); }
+  h1 { margin:0 0 4px; font-size:20px; }
+  header p { margin:0; color:var(--muted); }
+  main { padding:24px 28px; max-width:1200px; margin:0 auto; display:grid; gap:24px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; }
+  h2 { margin:0 0 14px; font-size:16px; }
+  .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+  label { display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted); }
+  input, select, button { background:#0d131a; color:var(--text); border:1px solid var(--line);
+    border-radius:6px; padding:8px 10px; font-size:14px; }
+  button { background:var(--accent); color:#08121d; font-weight:600; cursor:pointer; border-color:var(--accent); }
+  button:hover { filter:brightness(1.1); }
+  table { width:100%; border-collapse:collapse; margin-top:12px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  .badge.normal { background:rgba(46,168,123,.15); color:var(--normal); }
+  .badge.gap { background:rgba(255,107,107,.15); color:var(--gap); }
+  .badge.overlap, .badge.overlap-first, .badge.overlap-last { background:rgba(255,209,102,.15); color:var(--overlap); }
+  .muted { color:var(--muted); }
+  .axis { display:flex; gap:4px; margin-top:14px; overflow-x:auto; padding-bottom:6px; }
+  .cell { min-width:74px; border:1px solid var(--line); border-radius:6px; padding:8px 6px; text-align:center; }
+  .cell.gap { border-color:var(--gap); background:rgba(255,107,107,.08); }
+  .cell.overlap, .cell.overlap-first, .cell.overlap-last { border-color:var(--overlap); background:rgba(255,209,102,.08); }
+  .cell .h { font-weight:600; }
+  .cell .k { font-size:11px; color:var(--muted); margin-top:2px; }
+  .note { font-size:12px; color:var(--muted); margin-top:10px; }
+  .summary { display:flex; gap:24px; margin-top:14px; flex-wrap:wrap; }
+  .summary div { background:#0d131a; border:1px solid var(--line); border-radius:8px; padding:10px 16px; }
+  .summary b { font-size:18px; display:block; }
+  code { background:#0d131a; padding:1px 6px; border-radius:4px; }
+  .err { color:var(--gap); margin-top:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>tempora · 时间类型与夏令时规则可视化</h1>
+  <p>同一时刻跨时区写法 · 夏令时切换日的本地时间轴 · 按小时报表脊柱(gap 不造数,重复小时不合并)</p>
+</header>
+<main>
+
+<section>
+  <h2>1. 一个时刻,各时区的写法(比较与连接键与时区无关)</h2>
+  <div class="controls">
+    <label>基准时区
+      <select id="baseZone"></select>
+    </label>
+    <label>本地墙上时间
+      <input id="baseWall" type="text" value="2024-03-10T08:00:00" size="22">
+    </label>
+    <label>对比时区(逗号分隔)
+      <input id="targetZones" type="text" size="60"
+        value="UTC,America/New_York,Europe/London,Asia/Shanghai,Australia/Sydney,Pacific/Apia">
+    </label>
+    <button onclick="loadInstant()">查询时刻</button>
+  </div>
+  <div id="instantErr" class="err"></div>
+  <table id="instantTable" style="display:none">
+    <thead><tr><th>时区</th><th>墙上时间</th><th>缩写</th><th>偏移</th><th>Unix 纳秒(连接键)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="note">所有行的 Unix 纳秒完全相同 —— 不同写法是同一个绝对时刻,<code>Equal</code>/<code>Compare</code>/join key 必然相等。</p>
+</section>
+
+<section>
+  <h2>2. 夏令时切换日:本地时间轴怎么跳</h2>
+  <div class="controls">
+    <label>时区 <select id="tlZone"></select></label>
+    <label>日期 <input id="tlDate" type="date" value="2024-03-10"></label>
+    <button onclick="loadTimeline()">查看时间轴</button>
+  </div>
+  <div id="tlErr" class="err"></div>
+  <div id="tlMeta" class="summary" style="display:none"></div>
+  <div id="axis" class="axis"></div>
+  <p class="note">
+    <span class="badge gap">gap</span> 该墙钟小时不存在(春季跳时),报表保留空行但绝不生成数据;
+    <span class="badge overlap">overlap</span> 该墙钟小时出现两次(秋季回退),两行分别对应两次出现,不合并。
+  </p>
+</section>
+
+<section>
+  <h2>3. 典型按小时汇总报表(核对条数与总数)</h2>
+  <div class="controls">
+    <label>时区 <select id="rpZone"></select></label>
+    <label>日期 <input id="rpDate" type="date" value="2024-03-10"></label>
+    <button onclick="loadReport()">生成报表</button>
+  </div>
+  <div id="rpErr" class="err"></div>
+  <div id="rpSummary" class="summary" style="display:none"></div>
+  <table id="rpTable" style="display:none">
+    <thead><tr><th>墙钟小时</th><th>类型</th><th>区间(UTC)</th><th>实际时长</th><th>条数</th><th>合计</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+</main>
+
+<script>
+let ZONES = [];
+async function init() {
+  const r = await fetch('/api/zones');
+  const data = await r.json();
+  ZONES = data.zones;
+  for (const id of ['baseZone','tlZone','rpZone']) {
+    const sel = document.getElementById(id);
+    sel.innerHTML = ZONES.map(z => `<option>${z}</option>`).join('');
+  }
+  document.getElementById('tlZone').value = 'America/New_York';
+  document.getElementById('rpZone').value = 'America/New_York';
+  loadInstant(); loadTimeline(); loadReport();
+}
+function showErr(id, msg) { const el = document.getElementById(id); el.textContent = msg || ''; }
+function badge(kind) { return `<span class="badge ${kind}">${kind}</span>`; }
+
+async function loadInstant() {
+  showErr('instantErr','');
+  const p = new URLSearchParams({
+    baseZone: baseZone.value, wall: baseWall.value, zones: targetZones.value
+  });
+  const r = await fetch('/api/instant?' + p);
+  const d = await r.json();
+  if (!r.ok) { showErr('instantErr', d.error); return; }
+  const tb = document.querySelector('#instantTable tbody');
+  tb.innerHTML = d.views.map(v =>
+    `<tr><td>${v.zone}</td><td>${v.wall}</td><td>${v.abbreviation}</td>
+     <td>${v.offset}</td><td class="muted">${v.unixNano}</td></tr>`).join('');
+  instantTable.style.display = 'table';
+}
+
+async function loadTimeline() {
+  showErr('tlErr','');
+  const p = new URLSearchParams({ zone: tlZone.value, date: tlDate.value });
+  const r = await fetch('/api/timeline?' + p);
+  const d = await r.json();
+  if (!r.ok) { showErr('tlErr', d.error); return; }
+  const gaps = d.hours.filter(h => h.kind === 'gap').length;
+  const overlaps = d.hours.filter(h => h.kind.startsWith('overlap')).length;
+  tlMeta.style.display = 'flex';
+  tlMeta.innerHTML = `
+    <div><b>${d.hours.length}</b><span class="muted">时间轴单元格</span></div>
+    <div><b style="color:var(--gap)">${gaps}</b><span class="muted">不存在的小时</span></div>
+    <div><b style="color:var(--overlap)">${overlaps}</b><span class="muted">重复的小时</span></div>
+    <div><b>${d.transitions.length}</b><span class="muted">偏移切换</span></div>`;
+  axis.innerHTML = d.hours.map(h => {
+    const hh = h.wall.slice(11,16);
+    return `<div class="cell ${h.kind}"><div class="h">${hh}</div><div class="k">${h.kind}</div></div>`;
+  }).join('');
+}
+
+async function loadReport() {
+  showErr('rpErr','');
+  const p = new URLSearchParams({ zone: rpZone.value, date: rpDate.value });
+  const r = await fetch('/api/report?' + p);
+  const d = await r.json();
+  if (!r.ok) { showErr('rpErr', d.error); return; }
+  rpSummary.style.display = 'flex';
+  rpSummary.innerHTML = `
+    <div><b>${d.rowCount}</b><span class="muted">报表行数(墙钟标签 24,gap/overlap 增减)</span></div>
+    <div><b>${d.totalCount}</b><span class="muted">事件总条数</span></div>
+    <div><b>${d.totalSum}</b><span class="muted">度量合计</span></div>`;
+  const tb = document.querySelector('#rpTable tbody');
+  tb.innerHTML = d.rows.map(x => {
+    const span = x.realSpanMinutes ? x.realSpanMinutes + ' 分钟' : '<span class="muted">—</span>';
+    const interval = x.startUTC ? `${x.startUTC.slice(11,19)} → ${x.endUTC.slice(11,19)} UTC` : '<span class="muted">无时刻</span>';
+    const sum = x.sum === null || x.sum === undefined ? '<span class="muted">null(不造数)</span>' : x.sum;
+    return `<tr><td>${x.wall.slice(11,16)}</td><td>${badge(x.kind)}</td>
+      <td class="muted">${interval}</td><td>${span}</td><td>${x.count}</td><td>${sum}</td></tr>`;
+  }).join('');
+  rpTable.style.display = 'table';
+}
+init();
+</script>
+</body>
+</html>
